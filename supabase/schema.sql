@@ -6,10 +6,13 @@ on conflict (id) do nothing;
 
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
+  email text unique,
   display_name text,
   role text not null default 'member' check (role in ('admin', 'member')),
   created_at timestamptz not null default now()
 );
+
+alter table public.profiles add column if not exists email text;
 
 create table if not exists public.collections (
   id uuid primary key default gen_random_uuid(),
@@ -64,41 +67,58 @@ security definer
 set search_path = public
 as $$
 begin
-  insert into public.profiles (id, display_name)
-  values (new.id, coalesce(new.raw_user_meta_data ->> 'display_name', new.email))
+  insert into public.profiles (id, email, display_name)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data ->> 'display_name', new.email)
+  )
   on conflict (id) do nothing;
   return new;
 end;
 $$;
 
-create or replace function public.is_collection_owner(target_collection_id uuid)
-returns boolean
-language sql
-stable
+create or replace function public.invite_user_to_collection(
+  target_collection_id uuid,
+  target_email text,
+  target_permission text default 'viewer'
+)
+returns void
+language plpgsql
 security definer
 set search_path = public
 as $$
-  select exists (
+declare
+  target_profile_id uuid;
+begin
+  if not exists (
     select 1
     from public.collections c
     where c.id = target_collection_id
       and c.owner_id = auth.uid()
-  );
-$$;
+  ) then
+    raise exception 'Only the collection owner can invite users.';
+  end if;
 
-create or replace function public.is_collection_member(target_collection_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select exists (
-    select 1
-    from public.collection_members cm
-    where cm.collection_id = target_collection_id
-      and cm.profile_id = auth.uid()
-  );
+  if target_permission not in ('viewer', 'editor') then
+    raise exception 'Invalid permission.';
+  end if;
+
+  select p.id
+    into target_profile_id
+  from public.profiles p
+  where lower(p.email) = lower(target_email)
+  limit 1;
+
+  if target_profile_id is null then
+    raise exception 'User not found for this email.';
+  end if;
+
+  insert into public.collection_members (collection_id, profile_id, permission)
+  values (target_collection_id, target_profile_id, target_permission)
+  on conflict (collection_id, profile_id)
+  do update set permission = excluded.permission;
+end;
 $$;
 
 drop trigger if exists on_auth_user_created on auth.users;
@@ -116,6 +136,7 @@ alter table public.collection_members enable row level security;
 drop policy if exists "profiles can read themselves" on public.profiles;
 drop policy if exists "profiles can update themselves" on public.profiles;
 drop policy if exists "owners and members can read collections" on public.collections;
+drop policy if exists "owners can read collections" on public.collections;
 drop policy if exists "owners can manage collections" on public.collections;
 drop policy if exists "owners and members can read tracks" on public.tracks;
 drop policy if exists "owners can read tracks" on public.tracks;
@@ -124,6 +145,7 @@ drop policy if exists "users can upload own audio objects" on storage.objects;
 drop policy if exists "users can read own audio objects" on storage.objects;
 drop policy if exists "users can delete own audio objects" on storage.objects;
 drop policy if exists "members can read collection tracks" on public.collection_tracks;
+drop policy if exists "owners can read collection tracks" on public.collection_tracks;
 drop policy if exists "owners can manage collection tracks" on public.collection_tracks;
 drop policy if exists "members can read own memberships" on public.collection_members;
 drop policy if exists "owners can manage members" on public.collection_members;
@@ -138,13 +160,11 @@ on public.profiles
 for update
 using (auth.uid() = id);
 
-create policy "owners and members can read collections"
+create policy "owners can read collections"
 on public.collections
 for select
 using (
   public.collections.owner_id = auth.uid()
-  or public.collections.visibility = 'public'
-  or public.is_collection_member(public.collections.id)
 );
 
 create policy "owners can manage collections"
@@ -194,25 +214,37 @@ using (
   and (storage.foldername(name))[1] = auth.uid()::text
 );
 
-create policy "members can read collection tracks"
+create policy "owners can read collection tracks"
 on public.collection_tracks
 for select
 using (
-  public.is_collection_owner(collection_id)
-  or public.is_collection_member(collection_id)
-  or exists (
+  exists (
     select 1
     from public.collections c
     where c.id = public.collection_tracks.collection_id
-      and c.visibility = 'public'
+      and c.owner_id = auth.uid()
   )
 );
 
 create policy "owners can manage collection tracks"
 on public.collection_tracks
 for all
-using (public.is_collection_owner(collection_id))
-with check (public.is_collection_owner(collection_id));
+using (
+  exists (
+    select 1
+    from public.collections c
+    where c.id = public.collection_tracks.collection_id
+      and c.owner_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.collections c
+    where c.id = public.collection_tracks.collection_id
+      and c.owner_id = auth.uid()
+  )
+);
 
 create policy "members can read own memberships"
 on public.collection_members
@@ -222,5 +254,19 @@ using (profile_id = auth.uid());
 create policy "owners can manage members"
 on public.collection_members
 for all
-using (public.is_collection_owner(collection_id))
-with check (public.is_collection_owner(collection_id));
+using (
+  exists (
+    select 1
+    from public.collections c
+    where c.id = public.collection_members.collection_id
+      and c.owner_id = auth.uid()
+  )
+)
+with check (
+  exists (
+    select 1
+    from public.collections c
+    where c.id = public.collection_members.collection_id
+      and c.owner_id = auth.uid()
+  )
+);

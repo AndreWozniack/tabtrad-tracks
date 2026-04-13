@@ -1093,6 +1093,44 @@ textarea {
     grid-template-columns: 1fr;
   }
 
+  .explorer-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .player-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .explorer-sidebar {
+    position: static;
+  }
+
+  .player-fixed {
+    position: static;
+  }
+
+  .panel-header,
+  .collection-item,
+  .track-manager-item,
+  .file-row,
+  .file-table-header,
+  .track-actions,
+  .collection-meta-line,
+  .modal-actions,
+  .player-queue-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .inline-form {
+    grid-template-columns: 1fr;
+  }
+
+  .player-folder-strip,
+  .queue-row {
+    grid-template-columns: 1fr;
+  }
+
   .hero-card {
     transform: none;
   }

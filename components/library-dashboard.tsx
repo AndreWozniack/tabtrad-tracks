@@ -9,6 +9,7 @@ import {
   FolderPlus,
   LoaderCircle,
   LogOut,
+  MoreHorizontal,
   Music2,
   Upload,
   UserRound,
@@ -41,9 +42,26 @@ type FolderRow = {
 
 type ProfileRow = {
   id: string;
+  email: string | null;
   display_name: string | null;
   role: string;
   created_at: string;
+};
+
+type CollectionRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  visibility: "private" | "team" | "public";
+  public_share_token: string | null;
+  created_at: string;
+};
+
+type CollectionTrackRow = {
+  id: string;
+  collection_id: string;
+  track_id: string;
+  sort_order: number;
 };
 
 type AuthMode = "signin" | "signup" | "forgot-password" | "reset-password";
