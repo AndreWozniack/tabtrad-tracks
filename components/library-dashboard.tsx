@@ -3,14 +3,23 @@
 import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
 import {
+  ArrowDown,
+  ArrowUp,
   Disc3,
+  FolderCog,
+  FolderPlus,
   LoaderCircle,
   LogOut,
+  MoreHorizontal,
   Music2,
   Play,
+  StepBack,
+  StepForward,
+  Trash2,
   Upload,
   UserRound,
-  UserRoundPlus
+  UserRoundPlus,
+  Users
 } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase";
 
@@ -28,9 +37,26 @@ type TrackRow = {
 
 type ProfileRow = {
   id: string;
+  email: string | null;
   display_name: string | null;
   role: string;
   created_at: string;
+};
+
+type CollectionRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  visibility: "private" | "team" | "public";
+  public_share_token: string | null;
+  created_at: string;
+};
+
+type CollectionTrackRow = {
+  id: string;
+  collection_id: string;
+  track_id: string;
+  sort_order: number;
 };
 
 type AuthMode = "signin" | "signup" | "forgot-password" | "reset-password";
@@ -70,6 +96,16 @@ function formatDate(date: string | null) {
   }).format(new Date(date));
 }
 
+function slugify(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
 export function LibraryDashboard({ section }: LibraryDashboardProps) {
   const [supabase] = useState(() => createSupabaseBrowserClient());
   const [authMode, setAuthMode] = useState<AuthMode>("signin");
@@ -84,7 +120,19 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
   const [userId, setUserId] = useState<string | null>(null);
   const [tracks, setTracks] = useState<TrackRow[]>([]);
   const [profile, setProfile] = useState<ProfileRow | null>(null);
+  const [collections, setCollections] = useState<CollectionRow[]>([]);
+  const [collectionTracks, setCollectionTracks] = useState<CollectionTrackRow[]>([]);
   const [displayNameInput, setDisplayNameInput] = useState("");
+  const [collectionName, setCollectionName] = useState("");
+  const [collectionDescription, setCollectionDescription] = useState("");
+  const [collectionVisibility, setCollectionVisibility] =
+    useState<CollectionRow["visibility"]>("private");
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("");
+  const [shareCollectionId, setShareCollectionId] = useState<string>("");
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [invitePermission, setInvitePermission] = useState<"viewer" | "editor">(
+    "viewer"
+  );
   const [playingTrackId, setPlayingTrackId] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -92,14 +140,81 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
   const [loadingSession, setLoadingSession] = useState(true);
   const [submittingAuth, setSubmittingAuth] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [loadingTracks, setLoadingTracks] = useState(false);
+  const [loadingLibrary, setLoadingLibrary] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [savingCollection, setSavingCollection] = useState(false);
+  const [sharingCollection, setSharingCollection] = useState(false);
+  const [busyTrackId, setBusyTrackId] = useState<string | null>(null);
+  const [isAddTrackOpen, setIsAddTrackOpen] = useState(false);
+  const [isCreateCollectionOpen, setIsCreateCollectionOpen] = useState(false);
+  const [isShareCollectionOpen, setIsShareCollectionOpen] = useState(false);
+  const [isEditCollectionOpen, setIsEditCollectionOpen] = useState(false);
+  const [openTrackMenuId, setOpenTrackMenuId] = useState<string | null>(null);
+  const [openCollectionMenuId, setOpenCollectionMenuId] = useState<string | null>(null);
+  const [draggedTrackId, setDraggedTrackId] = useState<string | null>(null);
+  const [dropCollectionId, setDropCollectionId] = useState<string | null>(null);
   const isRecoveryMode = authMode === "reset-password";
 
   const currentTrack = useMemo(
     () => tracks.find((track) => track.id === playingTrackId) ?? null,
     [playingTrackId, tracks]
   );
+
+  const selectedCollection = useMemo(
+    () =>
+      collections.find((collection) => collection.id === selectedCollectionId) ?? null,
+    [collections, selectedCollectionId]
+  );
+
+  const visibleTracks = useMemo(() => {
+    if (!selectedCollectionId) {
+      return tracks;
+    }
+
+    const orderedItems = collectionTracks
+      .filter((item) => item.collection_id === selectedCollectionId)
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    return orderedItems
+      .map((item) => tracks.find((track) => track.id === item.track_id) ?? null)
+      .filter((track): track is TrackRow => Boolean(track));
+  }, [collectionTracks, selectedCollectionId, tracks]);
+
+  const playerTracks = useMemo(() => {
+    if (!selectedCollectionId) {
+      return tracks;
+    }
+
+    const orderedItems = collectionTracks
+      .filter((item) => item.collection_id === selectedCollectionId)
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    return orderedItems
+      .map((item) => tracks.find((track) => track.id === item.track_id) ?? null)
+      .filter((track): track is TrackRow => Boolean(track));
+  }, [collectionTracks, selectedCollectionId, tracks]);
+
+  function collectionTrackCount(collectionId: string) {
+    return collectionTracks.filter((item) => item.collection_id === collectionId).length;
+  }
+
+  function trackCollectionNames(trackId: string) {
+    const ids = collectionTracks
+      .filter((item) => item.track_id === trackId)
+      .map((item) => item.collection_id);
+
+    return collections
+      .filter((collection) => ids.includes(collection.id))
+      .map((collection) => collection.name);
+  }
+
+  const currentQueue = useMemo(() => {
+    return playerTracks;
+  }, [playerTracks]);
+
+  const currentQueueIndex = useMemo(() => {
+    return currentQueue.findIndex((track) => track.id === playingTrackId);
+  }, [currentQueue, playingTrackId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -139,63 +254,16 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
   }, [supabase]);
 
   useEffect(() => {
-    if (!userId) {
-      setTracks([]);
-      setProfile(null);
-      return;
-    }
-
-    let isMounted = true;
-
-    async function fetchData() {
-      setLoadingTracks(true);
-      setErrorMessage(null);
-
-      const [{ data: tracksData, error: tracksError }, { data: profileData, error: profileError }] =
-        await Promise.all([
-          supabase
-            .from("tracks")
-            .select(
-              "id, title, artist, notes, storage_bucket, storage_path, duration_seconds, file_size_bytes, created_at"
-            )
-            .eq("owner_id", userId)
-            .order("created_at", { ascending: false }),
-          supabase
-            .from("profiles")
-            .select("id, display_name, role, created_at")
-            .eq("id", userId)
-            .single()
-        ]);
-
-      if (!isMounted) return;
-
-      if (tracksError) {
-        setErrorMessage(tracksError.message);
-      } else {
-        setTracks((tracksData ?? []) as TrackRow[]);
-      }
-
-      if (profileError) {
-        setErrorMessage(profileError.message);
-      } else {
-        const nextProfile = profileData as ProfileRow;
-        setProfile(nextProfile);
-        setDisplayNameInput(nextProfile.display_name ?? "");
-      }
-
-      setLoadingTracks(false);
-    }
-
-    fetchData();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [supabase, userId]);
-
-  useEffect(() => {
     async function detectRecoverySession() {
       if (typeof window === "undefined") return;
+
+      const url = new URL(window.location.href);
+
+      if (url.searchParams.get("mode") === "reset-password") {
+        setAuthMode("reset-password");
+        setStatusMessage("Defina sua nova senha para concluir a recuperação.");
+        return;
+      }
 
       const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
       const recoveryType = hash.get("type");
@@ -227,23 +295,137 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
     detectRecoverySession();
   }, [supabase]);
 
-  async function refreshTracks() {
-    if (!userId) return;
-
-    const { data, error } = await supabase
-      .from("tracks")
-      .select(
-        "id, title, artist, notes, storage_bucket, storage_path, duration_seconds, file_size_bytes, created_at"
-      )
-      .eq("owner_id", userId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setErrorMessage(error.message);
+  useEffect(() => {
+    if (!userId) {
+      setTracks([]);
+      setProfile(null);
+      setCollections([]);
+      setCollectionTracks([]);
       return;
     }
 
-    setTracks((data ?? []) as TrackRow[]);
+    let isMounted = true;
+
+    async function fetchLibrary() {
+      setLoadingLibrary(true);
+      setErrorMessage(null);
+
+      const [
+        { data: tracksData, error: tracksError },
+        { data: profileData, error: profileError },
+        { data: collectionsData, error: collectionsError },
+        { data: collectionTracksData, error: collectionTracksError }
+      ] = await Promise.all([
+        supabase
+          .from("tracks")
+          .select(
+            "id, title, artist, notes, storage_bucket, storage_path, duration_seconds, file_size_bytes, created_at"
+          )
+          .eq("owner_id", userId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("profiles")
+          .select("id, email, display_name, role, created_at")
+          .eq("id", userId)
+          .single(),
+        supabase
+          .from("collections")
+          .select("id, name, description, visibility, public_share_token, created_at")
+          .eq("owner_id", userId)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("collection_tracks")
+          .select("id, collection_id, track_id, sort_order")
+          .order("sort_order", { ascending: true })
+      ]);
+
+      if (!isMounted) return;
+
+      if (tracksError) {
+        setErrorMessage(tracksError.message);
+      } else {
+        setTracks((tracksData ?? []) as TrackRow[]);
+      }
+
+      if (profileError) {
+        setErrorMessage(profileError.message);
+      } else {
+        const nextProfile = profileData as ProfileRow;
+        setProfile(nextProfile);
+        setDisplayNameInput(nextProfile.display_name ?? "");
+      }
+
+      if (collectionsError) {
+        setErrorMessage(collectionsError.message);
+      } else {
+        const nextCollections = (collectionsData ?? []) as CollectionRow[];
+        setCollections(nextCollections);
+        setSelectedCollectionId((current) => current || nextCollections[0]?.id || "");
+        setShareCollectionId((current) => current || nextCollections[0]?.id || "");
+      }
+
+      if (collectionTracksError) {
+        setErrorMessage(collectionTracksError.message);
+      } else {
+        setCollectionTracks((collectionTracksData ?? []) as CollectionTrackRow[]);
+      }
+
+      setLoadingLibrary(false);
+    }
+
+    fetchLibrary();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [supabase, userId]);
+
+  async function refreshLibrary() {
+    if (!userId) return;
+
+    const [
+      { data: tracksData, error: tracksError },
+      { data: collectionsData, error: collectionsError },
+      { data: collectionTracksData, error: collectionTracksError }
+    ] = await Promise.all([
+      supabase
+        .from("tracks")
+        .select(
+          "id, title, artist, notes, storage_bucket, storage_path, duration_seconds, file_size_bytes, created_at"
+        )
+        .eq("owner_id", userId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("collections")
+        .select("id, name, description, visibility, public_share_token, created_at")
+        .eq("owner_id", userId)
+        .order("created_at", { ascending: false }),
+      supabase
+        .from("collection_tracks")
+        .select("id, collection_id, track_id, sort_order")
+        .order("sort_order", { ascending: true })
+    ]);
+
+    if (tracksError || collectionsError || collectionTracksError) {
+      setErrorMessage(
+        tracksError?.message ||
+          collectionsError?.message ||
+          collectionTracksError?.message ||
+          "Falha ao atualizar biblioteca."
+      );
+      return;
+    }
+
+    const nextCollections = (collectionsData ?? []) as CollectionRow[];
+    setTracks((tracksData ?? []) as TrackRow[]);
+    setCollections(nextCollections);
+    setCollectionTracks((collectionTracksData ?? []) as CollectionTrackRow[]);
+    setSelectedCollectionId((current) =>
+      current && nextCollections.some((collection) => collection.id === current)
+        ? current
+        : ""
+    );
+    setShareCollectionId((current) => current || nextCollections[0]?.id || "");
   }
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
@@ -256,7 +438,7 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
       const redirectTo =
         typeof window === "undefined"
           ? undefined
-          : `${window.location.origin}/biblioteca/perfil`;
+          : `${window.location.origin}/auth/callback?next=/biblioteca/perfil&mode=reset-password`;
 
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo
@@ -280,9 +462,7 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
         return;
       }
 
-      const { error } = await supabase.auth.updateUser({
-        password
-      });
+      const { error } = await supabase.auth.updateUser({ password });
 
       if (error) {
         setErrorMessage(error.message);
@@ -312,10 +492,7 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
         setStatusMessage("Conta criada. Se a confirmação por email estiver ativa, confirme antes de entrar.");
       }
     } else {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
         setErrorMessage(error.message);
@@ -400,7 +577,8 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
       setTitle("");
       setArtist("");
       setNotes("");
-      await refreshTracks();
+      setIsAddTrackOpen(false);
+      await refreshLibrary();
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Falha ao enviar o arquivo."
@@ -409,6 +587,14 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
       URL.revokeObjectURL(previewUrl);
       setUploading(false);
     }
+  }
+
+  function handleCloseAddTrackModal() {
+    setIsAddTrackOpen(false);
+    setSelectedFile(null);
+    setTitle("");
+    setArtist("");
+    setNotes("");
   }
 
   async function handlePlay(track: TrackRow) {
@@ -428,6 +614,331 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
 
     setPlayingTrackId(track.id);
     setAudioUrl(data.signedUrl);
+  }
+
+  async function handleDeleteTrack(track: TrackRow) {
+    setBusyTrackId(track.id);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const bucket = track.storage_bucket ?? storageBucket;
+
+    const { error: storageError } = await supabase.storage
+      .from(bucket)
+      .remove([track.storage_path]);
+
+    if (storageError) {
+      setErrorMessage(storageError.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    const { error: deleteCollectionError } = await supabase
+      .from("collection_tracks")
+      .delete()
+      .eq("track_id", track.id);
+
+    if (deleteCollectionError) {
+      setErrorMessage(deleteCollectionError.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    const { error: deleteTrackError } = await supabase
+      .from("tracks")
+      .delete()
+      .eq("id", track.id);
+
+    if (deleteTrackError) {
+      setErrorMessage(deleteTrackError.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    if (playingTrackId === track.id) {
+      setPlayingTrackId(null);
+      setAudioUrl(null);
+    }
+
+    setStatusMessage("Faixa removida.");
+    setBusyTrackId(null);
+    await refreshLibrary();
+  }
+
+  async function handleCreateCollection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!userId || !collectionName.trim()) {
+      setErrorMessage("Informe um nome para a pasta ou playlist.");
+      return;
+    }
+
+    setSavingCollection(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const slugBase = slugify(collectionName);
+
+    const { error } = await supabase.from("collections").insert({
+      owner_id: userId,
+      name: collectionName.trim(),
+      description: collectionDescription.trim() || null,
+      slug: `${slugBase || "colecao"}-${crypto.randomUUID().slice(0, 8)}`,
+      visibility: collectionVisibility
+    });
+
+    if (error) {
+      setErrorMessage(error.message);
+      setSavingCollection(false);
+      return;
+    }
+
+    setCollectionName("");
+    setCollectionDescription("");
+    setCollectionVisibility("private");
+    setIsCreateCollectionOpen(false);
+    setStatusMessage("Pasta ou playlist criada.");
+    setSavingCollection(false);
+    await refreshLibrary();
+  }
+
+  async function handleUpdateCollection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!selectedCollection) {
+      setErrorMessage("Selecione uma pasta antes de editar.");
+      return;
+    }
+
+    setSavingCollection(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const { error } = await supabase
+      .from("collections")
+      .update({
+        name: collectionName.trim(),
+        description: collectionDescription.trim() || null,
+        visibility: collectionVisibility
+      })
+      .eq("id", selectedCollection.id);
+
+    if (error) {
+      setErrorMessage(error.message);
+      setSavingCollection(false);
+      return;
+    }
+
+    setStatusMessage("Pasta atualizada.");
+    setSavingCollection(false);
+    setIsEditCollectionOpen(false);
+    await refreshLibrary();
+  }
+
+  async function handleDeleteCollection() {
+    if (!selectedCollection) {
+      setErrorMessage("Selecione uma pasta antes de excluir.");
+      return;
+    }
+
+    setSavingCollection(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const { error: deleteTracksLinkError } = await supabase
+      .from("collection_tracks")
+      .delete()
+      .eq("collection_id", selectedCollection.id);
+
+    if (deleteTracksLinkError) {
+      setErrorMessage(deleteTracksLinkError.message);
+      setSavingCollection(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("collections")
+      .delete()
+      .eq("id", selectedCollection.id);
+
+    if (error) {
+      setErrorMessage(error.message);
+      setSavingCollection(false);
+      return;
+    }
+
+    setSelectedCollectionId("");
+    setShareCollectionId("");
+    setCollectionName("");
+    setCollectionDescription("");
+    setCollectionVisibility("private");
+    setStatusMessage("Pasta excluída.");
+    setSavingCollection(false);
+    setIsEditCollectionOpen(false);
+    await refreshLibrary();
+  }
+
+  async function handleAddTrackToCollection(trackId: string) {
+    if (!selectedCollectionId) {
+      setErrorMessage("Selecione uma pasta ou playlist para adicionar a música.");
+      return;
+    }
+
+    await handleAddTrackToSpecificCollection(trackId, selectedCollectionId);
+  }
+
+  async function handleAddTrackToSpecificCollection(
+    trackId: string,
+    collectionId: string
+  ) {
+    const targetCollection = collections.find((collection) => collection.id === collectionId);
+
+    const exists = collectionTracks.some(
+      (item) => item.collection_id === collectionId && item.track_id === trackId
+    );
+
+    if (exists) {
+      setStatusMessage("Essa música já está nessa pasta.");
+      return;
+    }
+
+    setBusyTrackId(trackId);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const nextSort =
+      collectionTracks
+        .filter((item) => item.collection_id === collectionId)
+        .reduce((max, item) => Math.max(max, item.sort_order), 0) + 1;
+
+    const { error } = await supabase.from("collection_tracks").insert({
+      collection_id: collectionId,
+      track_id: trackId,
+      sort_order: nextSort
+    });
+
+    if (error) {
+      setErrorMessage(error.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    setStatusMessage(`Música adicionada em ${targetCollection?.name || "sua pasta"}.`);
+    setBusyTrackId(null);
+    await refreshLibrary();
+  }
+
+  async function handleMoveTrackInCollection(trackId: string, direction: "up" | "down") {
+    if (!selectedCollectionId) return;
+
+    const orderedItems = collectionTracks
+      .filter((item) => item.collection_id === selectedCollectionId)
+      .sort((a, b) => a.sort_order - b.sort_order);
+
+    const currentIndex = orderedItems.findIndex((item) => item.track_id === trackId);
+    if (currentIndex === -1) return;
+
+    const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+    if (targetIndex < 0 || targetIndex >= orderedItems.length) return;
+
+    const currentItem = orderedItems[currentIndex];
+    const targetItem = orderedItems[targetIndex];
+
+    setBusyTrackId(trackId);
+    setErrorMessage(null);
+
+    const { error: firstError } = await supabase
+      .from("collection_tracks")
+      .update({ sort_order: -1 })
+      .eq("id", currentItem.id);
+
+    if (firstError) {
+      setErrorMessage(firstError.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    const { error: secondError } = await supabase
+      .from("collection_tracks")
+      .update({ sort_order: currentItem.sort_order })
+      .eq("id", targetItem.id);
+
+    if (secondError) {
+      setErrorMessage(secondError.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    const { error: thirdError } = await supabase
+      .from("collection_tracks")
+      .update({ sort_order: targetItem.sort_order })
+      .eq("id", currentItem.id);
+
+    if (thirdError) {
+      setErrorMessage(thirdError.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    setBusyTrackId(null);
+    await refreshLibrary();
+  }
+
+  async function handleRemoveTrackFromSelectedCollection(trackId: string) {
+    if (!selectedCollectionId) {
+      setErrorMessage("Selecione uma pasta antes de remover a faixa dela.");
+      return;
+    }
+
+    setBusyTrackId(trackId);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const { error } = await supabase
+      .from("collection_tracks")
+      .delete()
+      .eq("collection_id", selectedCollectionId)
+      .eq("track_id", trackId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      setBusyTrackId(null);
+      return;
+    }
+
+    setStatusMessage("Faixa removida da pasta atual.");
+    setBusyTrackId(null);
+    await refreshLibrary();
+  }
+
+  async function handleShareCollection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!shareCollectionId || !inviteEmail.trim()) {
+      setErrorMessage("Escolha uma coleção e informe o email do usuário.");
+      return;
+    }
+
+    setSharingCollection(true);
+    setErrorMessage(null);
+    setStatusMessage(null);
+
+    const { error } = await supabase.rpc("invite_user_to_collection", {
+      target_collection_id: shareCollectionId,
+      target_email: inviteEmail.trim(),
+      target_permission: invitePermission
+    });
+
+    if (error) {
+      setErrorMessage(error.message);
+      setSharingCollection(false);
+      return;
+    }
+
+    setInviteEmail("");
+    setIsShareCollectionOpen(false);
+    setStatusMessage("Compartilhamento registrado para essa pasta.");
+    setSharingCollection(false);
   }
 
   async function handleProfileSave(event: FormEvent<HTMLFormElement>) {
@@ -462,9 +973,36 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
     setSavingProfile(false);
   }
 
+  function openEditCollectionModal() {
+    if (!selectedCollection) return;
+    setCollectionName(selectedCollection.name);
+    setCollectionDescription(selectedCollection.description || "");
+    setCollectionVisibility(selectedCollection.visibility);
+    setIsEditCollectionOpen(true);
+  }
+
+  async function handlePlayPrevious() {
+    if (currentQueueIndex <= 0) return;
+    await handlePlay(currentQueue[currentQueueIndex - 1]);
+  }
+
+  async function handlePlayNext() {
+    if (currentQueueIndex < 0 || currentQueueIndex >= currentQueue.length - 1) return;
+    await handlePlay(currentQueue[currentQueueIndex + 1]);
+  }
+
+  function handleTrackDragStart(trackId: string) {
+    setDraggedTrackId(trackId);
+  }
+
+  function handleTrackDragEnd() {
+    setDraggedTrackId(null);
+    setDropCollectionId(null);
+  }
+
   if (loadingSession) {
     return (
-      <main className="library-page">
+      <main className="library-page wide">
         <section className="center-card">
           <LoaderCircle className="spin" size={20} />
           <span>Carregando sessão...</span>
@@ -475,19 +1013,19 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
 
   if (!sessionEmail || isRecoveryMode) {
     return (
-      <main className="library-page">
-        <section className="library-toolbar">
+      <main className="library-page wide">
+        <section className="library-toolbar solo">
           <div>
             <span className="eyebrow">Acesso</span>
-            <h1>Entre para gerenciar seu repertório</h1>
-            <p>Autenticação, recuperação de senha e biblioteca conectadas ao Supabase.</p>
+            <h1>Entre para gerenciar sua biblioteca</h1>
+            <p>Fluxo direto para login, recuperação de senha e organização do repertório.</p>
           </div>
         </section>
 
         {statusMessage ? <p className="status-banner success">{statusMessage}</p> : null}
         {errorMessage ? <p className="status-banner error">{errorMessage}</p> : null}
 
-        <section className="auth-layout">
+        <section className="single-column-section">
           <form className="auth-card" onSubmit={handleAuthSubmit}>
             <div>
               <span className="eyebrow">Conta</span>
@@ -500,13 +1038,6 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
                       ? "Recuperar senha"
                       : "Nova senha"}
               </h2>
-              <p>
-                {authMode === "forgot-password"
-                  ? "Informe seu email para receber o link de redefinição."
-                  : authMode === "reset-password"
-                    ? "Defina a nova senha da conta."
-                    : "Use email e senha para acessar sua biblioteca."}
-              </p>
             </div>
 
             {authMode !== "reset-password" ? (
@@ -572,29 +1103,17 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
 
             {authMode === "signin" ? (
               <>
-                <button
-                  className="button secondary"
-                  type="button"
-                  onClick={() => setAuthMode("signup")}
-                >
+                <button className="button secondary" type="button" onClick={() => setAuthMode("signup")}>
                   Ainda não tenho conta
                 </button>
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() => setAuthMode("forgot-password")}
-                >
+                <button className="text-button" type="button" onClick={() => setAuthMode("forgot-password")}>
                   Esqueci minha senha
                 </button>
               </>
             ) : null}
 
             {authMode === "signup" ? (
-              <button
-                className="button secondary"
-                type="button"
-                onClick={() => setAuthMode("signin")}
-              >
+              <button className="button secondary" type="button" onClick={() => setAuthMode("signin")}>
                 Já tenho conta
               </button>
             ) : null}
@@ -613,58 +1132,39 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
               </button>
             ) : null}
           </form>
-
-          <article className="setup-card">
-            <h3>Estrutura desta área</h3>
-            <ul className="plain-list">
-              <li>`/biblioteca/faixas` para cadastro e upload.</li>
-              <li>`/biblioteca/player` para tocar o repertório.</li>
-              <li>`/biblioteca/perfil` para dados da conta.</li>
-            </ul>
-          </article>
         </section>
       </main>
     );
   }
 
   return (
-    <main className="library-page">
-      <section className="library-toolbar">
+    <main className="library-page wide">
+      <section className="library-toolbar compact">
         <div>
-          <span className="eyebrow">Área privada</span>
-          <h1>Seu acervo de ensaio</h1>
-          <p>Separei o projeto em páginas próprias para perfil, faixas e reprodução.</p>
-        </div>
-        <div className="session-card">
-          <span>Conectado como</span>
-          <strong>{profile?.display_name || sessionEmail}</strong>
-          <small>{sessionEmail}</small>
-          <button className="button secondary" onClick={handleLogout} type="button">
-            <LogOut size={16} />
-            Sair
-          </button>
+          <span className="eyebrow">Biblioteca</span>
+          <h1>
+            {section === "tracks"
+              ? "Faixas e pastas"
+              : section === "player"
+                ? "Player de ensaio"
+                : "Perfil da conta"}
+          </h1>
+          <p>
+            Biblioteca em coluna única, com foco em organizar, tocar e compartilhar repertórios.
+          </p>
         </div>
       </section>
 
       <nav className="section-nav">
-        <Link
-          href="/biblioteca/faixas"
-          className={`nav-pill ${section === "tracks" ? "active" : ""}`}
-        >
+        <Link href="/biblioteca/faixas" className={`nav-pill ${section === "tracks" ? "active" : ""}`}>
           <Music2 size={16} />
           Faixas
         </Link>
-        <Link
-          href="/biblioteca/player"
-          className={`nav-pill ${section === "player" ? "active" : ""}`}
-        >
+        <Link href="/biblioteca/player" className={`nav-pill ${section === "player" ? "active" : ""}`}>
           <Disc3 size={16} />
           Player
         </Link>
-        <Link
-          href="/biblioteca/perfil"
-          className={`nav-pill ${section === "profile" ? "active" : ""}`}
-        >
+        <Link href="/biblioteca/perfil" className={`nav-pill ${section === "profile" ? "active" : ""}`}>
           <UserRound size={16} />
           Perfil
         </Link>
@@ -674,202 +1174,440 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
       {errorMessage ? <p className="status-banner error">{errorMessage}</p> : null}
 
       {section === "tracks" ? (
-        <section className="dashboard-grid">
-          <form className="upload-card" onSubmit={handleUpload}>
-            <div>
-              <span className="eyebrow">Nova música</span>
-              <h2>Enviar faixa</h2>
-            </div>
+        <div className="single-column-stack">
+          <section className="explorer-layout">
+            <aside className="panel-card explorer-sidebar">
+              <div className="panel-header">
+                <div>
+                  <span className="eyebrow">Pastas</span>
+                  <h2>Explorer</h2>
+                </div>
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => setIsCreateCollectionOpen(true)}
+                >
+                  <FolderPlus size={16} />
+                  Nova pasta
+                </button>
+              </div>
 
-            <label className="field">
-              <span>Arquivo</span>
-              <input type="file" accept="audio/*" onChange={handleFileChange} required />
-            </label>
-
-            <label className="field">
-              <span>Título</span>
-              <input
-                type="text"
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Nome da faixa"
-                required
-              />
-            </label>
-
-            <label className="field">
-              <span>Artista</span>
-              <input
-                type="text"
-                value={artist}
-                onChange={(event) => setArtist(event.target.value)}
-                placeholder="Opcional"
-              />
-            </label>
-
-            <label className="field">
-              <span>Notas</span>
-              <textarea
-                value={notes}
-                onChange={(event) => setNotes(event.target.value)}
-                placeholder="Coreografia, turma, observações..."
-                rows={4}
-              />
-            </label>
-
-            <button className="button primary" type="submit" disabled={uploading}>
-              {uploading ? (
-                <>
-                  <LoaderCircle className="spin" size={16} />
-                  Enviando
-                </>
-              ) : (
-                <>
-                  <Upload size={16} />
-                  Fazer upload
-                </>
-              )}
-            </button>
-          </form>
-
-          <section className="playlist-panel">
-            <div className="playlist-header">
-              <h2>Biblioteca</h2>
-              <span>{loadingTracks ? "Carregando..." : `${tracks.length} músicas`}</span>
-            </div>
-
-            {tracks.length === 0 && !loadingTracks ? (
-              <p className="empty-state">Nenhuma música cadastrada ainda.</p>
-            ) : null}
-
-            <div className="playlist-list">
-              {tracks.map((track, index) => (
-                <article key={track.id} className="playlist-item real">
-                  <span className="playlist-index">{index + 1}</span>
-                  <div className="playlist-copy">
-                    <strong>{track.title}</strong>
-                    <span>{track.artist || "Artista não informado"}</span>
+              <div className="explorer-tree">
+                <button
+                  type="button"
+                  className={`folder-row ${selectedCollectionId === "" ? "active" : ""}`}
+                  onClick={() => setSelectedCollectionId("")}
+                >
+                  <span>Todas as faixas</span>
+                  <small>{tracks.length}</small>
+                </button>
+                {collections.map((collection) => (
+                  <div
+                    key={collection.id}
+                    className={`folder-row ${selectedCollectionId === collection.id ? "active" : ""} ${
+                      dropCollectionId === collection.id ? "drop-target" : ""
+                    }`}
+                    onDragOver={(event) => {
+                      event.preventDefault();
+                      setDropCollectionId(collection.id);
+                    }}
+                    onDragLeave={() =>
+                      setDropCollectionId((current) =>
+                        current === collection.id ? null : current
+                      )
+                    }
+                    onDrop={async (event) => {
+                      event.preventDefault();
+                      if (draggedTrackId) {
+                        await handleAddTrackToSpecificCollection(draggedTrackId, collection.id);
+                      }
+                      handleTrackDragEnd();
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="folder-main-button"
+                      onClick={() => {
+                        setSelectedCollectionId(collection.id);
+                        setShareCollectionId(collection.id);
+                        setOpenCollectionMenuId(null);
+                      }}
+                    >
+                      <div>
+                        <strong>{collection.name}</strong>
+                        <small>{collection.description || collection.visibility}</small>
+                      </div>
+                      <small>{collectionTrackCount(collection.id)}</small>
+                    </button>
+                    <div className="context-menu-wrap">
+                      <button
+                        type="button"
+                        className="icon-button"
+                        onClick={() =>
+                          setOpenCollectionMenuId((current) =>
+                            current === collection.id ? null : collection.id
+                          )
+                        }
+                      >
+                        <MoreHorizontal size={16} />
+                      </button>
+                      {openCollectionMenuId === collection.id ? (
+                        <div className="context-menu">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCollectionId(collection.id);
+                              setShareCollectionId(collection.id);
+                              openEditCollectionModal();
+                              setOpenCollectionMenuId(null);
+                            }}
+                          >
+                            Editar pasta
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedCollectionId(collection.id);
+                              setShareCollectionId(collection.id);
+                              setIsShareCollectionOpen(true);
+                              setOpenCollectionMenuId(null);
+                            }}
+                          >
+                            Compartilhar
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
-                  <div className="playlist-meta">
-                    <span>{formatDuration(track.duration_seconds)}</span>
-                    <span>{formatBytes(track.file_size_bytes)}</span>
+                ))}
+              </div>
+            </aside>
+
+            <div className="explorer-main">
+              <section className="panel-card">
+              <div className="panel-header">
+                <div>
+                  <span className="eyebrow">Conteúdo</span>
+                  <h2>{selectedCollection ? selectedCollection.name : "Todas as faixas"}</h2>
+                    <p className="panel-subtle">
+                      {selectedCollection
+                        ? selectedCollection.description || "Pasta selecionada na lateral."
+                        : "Selecione uma pasta na lateral para trabalhar como no Finder."}
+                    </p>
                   </div>
                   <button
-                    className="icon-button"
-                    onClick={() => handlePlay(track)}
+                    className="button primary"
                     type="button"
-                    aria-label={`Reproduzir ${track.title}`}
+                    onClick={() => setIsAddTrackOpen(true)}
                   >
-                    <Play size={16} />
+                    <Upload size={16} />
+                    Adicionar Faixa
                   </button>
-                  {playingTrackId === track.id && audioUrl ? (
-                    <span className="playing-indicator">pronta no player</span>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => setIsShareCollectionOpen(true)}
+                    disabled={!selectedCollection}
+                  >
+                    <Users size={16} />
+                    Compartilhar Pasta
+                  </button>
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={openEditCollectionModal}
+                    disabled={!selectedCollection}
+                  >
+                    <FolderCog size={16} />
+                    Editar Pasta
+                  </button>
+                </div>
+
+                <div className="explorer-toolbar">
+                  <span className="panel-subtle">
+                    {selectedCollection
+                      ? `Adicionando faixas em: ${selectedCollection.name}`
+                      : "Selecione uma pasta na lateral para adicionar faixas a ela."}
+                  </span>
+                </div>
+
+                <div className="file-table">
+                  <div className="file-table-header">
+                    <span>Nome</span>
+                    <span>Artista</span>
+                    <span>Duração</span>
+                    <span>Pastas</span>
+                    <span>Ações</span>
+                  </div>
+                </div>
+
+                <div className="track-manager-list file-table-body">
+                  {visibleTracks.map((track) => (
+                    <article key={track.id} className="track-manager-item file-row">
+                      <div
+                        className="file-row-drag"
+                        draggable
+                        onDragStart={() => handleTrackDragStart(track.id)}
+                        onDragEnd={handleTrackDragEnd}
+                      >
+                        <div className="track-main">
+                          <strong>{track.title}</strong>
+                          <small>{formatBytes(track.file_size_bytes)}</small>
+                        </div>
+                        <span>{track.artist || "Artista não informado"}</span>
+                        <span>{formatDuration(track.duration_seconds)}</span>
+                        <span>{trackCollectionNames(track.id).join(", ") || "nenhuma"}</span>
+                        <div className="track-actions">
+                          {selectedCollection ? (
+                            <button
+                              className="icon-button"
+                              type="button"
+                              onClick={() => handleMoveTrackInCollection(track.id, "up")}
+                              disabled={busyTrackId === track.id}
+                            >
+                              <ArrowUp size={16} />
+                            </button>
+                          ) : null}
+                          {selectedCollection ? (
+                            <button
+                              className="icon-button"
+                              type="button"
+                              onClick={() => handleMoveTrackInCollection(track.id, "down")}
+                              disabled={busyTrackId === track.id}
+                            >
+                              <ArrowDown size={16} />
+                            </button>
+                          ) : null}
+                          <div className="context-menu-wrap">
+                            <button
+                              className="icon-button"
+                              type="button"
+                              onClick={() =>
+                                setOpenTrackMenuId((current) =>
+                                  current === track.id ? null : track.id
+                                )
+                              }
+                            >
+                              <MoreHorizontal size={16} />
+                            </button>
+                            {openTrackMenuId === track.id ? (
+                              <div className="context-menu">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handlePlay(track);
+                                    setOpenTrackMenuId(null);
+                                  }}
+                                >
+                                  Tocar
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleAddTrackToCollection(track.id);
+                                    setOpenTrackMenuId(null);
+                                  }}
+                                  disabled={!selectedCollectionId || busyTrackId === track.id}
+                                >
+                                  {selectedCollection ? "Adicionar nesta pasta" : "Escolha uma pasta"}
+                                </button>
+                                {selectedCollection ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      void handleRemoveTrackFromSelectedCollection(track.id);
+                                      setOpenTrackMenuId(null);
+                                    }}
+                                  >
+                                    Remover da pasta
+                                  </button>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleDeleteTrack(track);
+                                    setOpenTrackMenuId(null);
+                                  }}
+                                >
+                                  Excluir faixa
+                                </button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                  {visibleTracks.length === 0 ? (
+                    <p className="empty-state">
+                      {selectedCollection
+                        ? "Nenhuma faixa nesta pasta ainda."
+                        : "Nenhuma faixa cadastrada ainda."}
+                    </p>
                   ) : null}
-                </article>
-              ))}
+                </div>
+              </section>
             </div>
           </section>
-        </section>
+        </div>
       ) : null}
 
       {section === "player" ? (
-        <section className="dashboard-grid">
-          <article className="player-card">
-            <div>
-              <span className="eyebrow">Player</span>
-              <h2>Reprodução do ensaio</h2>
-            </div>
-            <p>Escolha uma faixa da lista para gerar uma URL assinada e tocar com segurança.</p>
-            {currentTrack ? (
-              <div className="current-track">
-                <strong>{currentTrack.title}</strong>
-                <span>{currentTrack.artist || "Artista não informado"}</span>
-                <span>{formatDuration(currentTrack.duration_seconds)}</span>
-              </div>
-            ) : (
-              <div className="player-placeholder">
-                <Disc3 size={18} />
-                <span>Selecione uma faixa abaixo.</span>
-              </div>
-            )}
-            {audioUrl ? <audio key={audioUrl} controls preload="metadata" src={audioUrl} /> : null}
-          </article>
-
-          <section className="playlist-panel">
-            <div className="playlist-header">
-              <h2>Fila disponível</h2>
-              <span>{tracks.length} músicas</span>
-            </div>
-            <div className="playlist-list">
-              {tracks.map((track, index) => (
-                <article key={track.id} className="playlist-item real">
-                  <span className="playlist-index">{index + 1}</span>
-                  <div className="playlist-copy">
-                    <strong>{track.title}</strong>
-                    <span>{track.artist || "Artista não informado"}</span>
-                  </div>
-                  <div className="playlist-meta">
-                    <span>{formatDate(track.created_at)}</span>
-                    <span>{formatDuration(track.duration_seconds)}</span>
-                  </div>
-                  <button
-                    className="icon-button"
-                    onClick={() => handlePlay(track)}
-                    type="button"
-                    aria-label={`Tocar ${track.title}`}
-                  >
-                    <Play size={16} />
-                  </button>
-                  {playingTrackId === track.id ? (
-                    <span className="playing-indicator">tocando</span>
-                  ) : null}
-                </article>
+        <div className="single-column-stack">
+          <section className="panel-card player-stage">
+            <div className="player-folder-strip">
+              <button
+                type="button"
+                className={`folder-chip ${selectedCollectionId === "" ? "active" : ""}`}
+                onClick={() => setSelectedCollectionId("")}
+              >
+                Todas as faixas
+              </button>
+              {collections.map((collection) => (
+                <button
+                  key={collection.id}
+                  type="button"
+                  className={`folder-chip ${selectedCollectionId === collection.id ? "active" : ""}`}
+                  onClick={() => setSelectedCollectionId(collection.id)}
+                >
+                  {collection.name}
+                </button>
               ))}
             </div>
+
+            <div className="player-now">
+              <div className="panel-header">
+                <div>
+                  <span className="eyebrow">Player</span>
+                  <h2>Rodar repertório</h2>
+                  <p className="panel-subtle">
+                    {selectedCollection
+                      ? `Fila atual da pasta ${selectedCollection.name}.`
+                      : "Clique em uma faixa na lateral para tocar."}
+                  </p>
+                </div>
+                <div className="player-controls">
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={handlePlayPrevious}
+                    disabled={currentQueueIndex <= 0}
+                  >
+                    <StepBack size={16} />
+                  </button>
+                  <button
+                    className="icon-button"
+                    type="button"
+                    onClick={handlePlayNext}
+                    disabled={
+                      currentQueueIndex < 0 || currentQueueIndex >= currentQueue.length - 1
+                    }
+                  >
+                    <StepForward size={16} />
+                  </button>
+                </div>
+              </div>
+              {currentTrack ? (
+                <div className="current-track">
+                  <strong>{currentTrack.title}</strong>
+                  <span>{currentTrack.artist || "Artista não informado"}</span>
+                  <span>{formatDuration(currentTrack.duration_seconds)}</span>
+                </div>
+              ) : (
+                <div className="player-placeholder">
+                  <Disc3 size={18} />
+                  <span>Escolha uma faixa da fila abaixo para começar.</span>
+                </div>
+              )}
+              {audioUrl ? (
+                <audio
+                  key={audioUrl}
+                  controls
+                  preload="metadata"
+                  src={audioUrl}
+                  onEnded={() => {
+                    void handlePlayNext();
+                  }}
+                />
+              ) : null}
+            </div>
+
+            <div className="player-queue">
+              <div className="player-queue-header">
+                <div>
+                  <span className="eyebrow">Fila Atual</span>
+                  <h3>{selectedCollection ? selectedCollection.name : "Todas as faixas"}</h3>
+                </div>
+                <span className="panel-subtle">
+                  {playerTracks.length} faixa{playerTracks.length === 1 ? "" : "s"}
+                </span>
+              </div>
+
+              <div className="player-queue-list">
+                {playerTracks.map((track, index) => (
+                  <button
+                    key={track.id}
+                    type="button"
+                    className={`queue-row ${playingTrackId === track.id ? "active" : ""}`}
+                    onClick={() => handlePlay(track)}
+                  >
+                    <span className="queue-index">{index + 1}</span>
+                    <div className="track-main">
+                      <strong>{track.title}</strong>
+                      <span>{track.artist || "Artista não informado"}</span>
+                    </div>
+                    <span>{formatDuration(track.duration_seconds)}</span>
+                  </button>
+                ))}
+                {playerTracks.length === 0 ? (
+                  <p className="empty-state">
+                    {selectedCollection
+                      ? "Nenhuma faixa nesta pasta."
+                      : "Nenhuma faixa disponível."}
+                  </p>
+                ) : null}
+              </div>
+            </div>
           </section>
-        </section>
+        </div>
       ) : null}
 
       {section === "profile" ? (
-        <section className="dashboard-grid">
-          <form className="upload-card" onSubmit={handleProfileSave}>
-            <div>
-              <span className="eyebrow">Perfil</span>
-              <h2>Dados da conta</h2>
+        <div className="single-column-stack">
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Perfil</span>
+                <h2>Dados da conta</h2>
+              </div>
             </div>
 
-            <label className="field">
-              <span>Nome de exibição</span>
-              <input
-                type="text"
-                value={displayNameInput}
-                onChange={(event) => setDisplayNameInput(event.target.value)}
-                placeholder="Seu nome"
-              />
-            </label>
+            <form className="inline-form" onSubmit={handleProfileSave}>
+              <label className="field grow">
+                <span>Nome de exibição</span>
+                <input
+                  type="text"
+                  value={displayNameInput}
+                  onChange={(event) => setDisplayNameInput(event.target.value)}
+                  placeholder="Seu nome"
+                />
+              </label>
+              <label className="field grow">
+                <span>Email</span>
+                <input type="email" value={profile?.email || sessionEmail || ""} readOnly />
+              </label>
+              <button className="button primary" type="submit" disabled={savingProfile}>
+                {savingProfile ? (
+                  <>
+                    <LoaderCircle className="spin" size={16} />
+                    Salvando
+                  </>
+                ) : (
+                  "Salvar perfil"
+                )}
+              </button>
+            </form>
 
-            <label className="field">
-              <span>Email</span>
-              <input type="email" value={sessionEmail} readOnly />
-            </label>
-
-            <button className="button primary" type="submit" disabled={savingProfile}>
-              {savingProfile ? (
-                <>
-                  <LoaderCircle className="spin" size={16} />
-                  Salvando
-                </>
-              ) : (
-                "Salvar perfil"
-              )}
-            </button>
-          </form>
-
-          <article className="player-card">
-            <div>
-              <span className="eyebrow">Resumo</span>
-              <h2>Sua conta</h2>
-            </div>
             <div className="profile-summary">
               <div>
                 <span>Nome</span>
@@ -887,9 +1625,370 @@ export function LibraryDashboard({ section }: LibraryDashboardProps) {
                 <span>Total de faixas</span>
                 <strong>{tracks.length}</strong>
               </div>
+              <div>
+                <span>Total de pastas</span>
+                <strong>{collections.length}</strong>
+              </div>
             </div>
-          </article>
-        </section>
+
+            <div className="profile-footer-actions">
+              <button className="button secondary" onClick={handleLogout} type="button">
+                <LogOut size={16} />
+                Sair
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {isAddTrackOpen ? (
+        <div className="modal-backdrop" onClick={handleCloseAddTrackModal} role="presentation">
+          <div
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Adicionar faixa"
+          >
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Nova faixa</span>
+                <h2>Adicionar Faixa</h2>
+              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={handleCloseAddTrackModal}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <form className="modal-form" onSubmit={handleUpload}>
+              <label className="field">
+                <span>Arquivo</span>
+                <input type="file" accept="audio/*" onChange={handleFileChange} required />
+              </label>
+              <label className="field">
+                <span>Título</span>
+                <input
+                  type="text"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Nome da faixa"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Artista</span>
+                <input
+                  type="text"
+                  value={artist}
+                  onChange={(event) => setArtist(event.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+              <label className="field">
+                <span>Notas</span>
+                <textarea
+                  value={notes}
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="Versão, coreografia, observações..."
+                  rows={4}
+                />
+              </label>
+              <div className="modal-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={handleCloseAddTrackModal}
+                >
+                  Cancelar
+                </button>
+                <button className="button primary" type="submit" disabled={uploading}>
+                  {uploading ? (
+                    <>
+                      <LoaderCircle className="spin" size={16} />
+                      Enviando
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      Salvar faixa
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isCreateCollectionOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsCreateCollectionOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Criar pasta"
+          >
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Nova pasta</span>
+                <h2>Criar pasta ou playlist</h2>
+              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => setIsCreateCollectionOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <form className="modal-form" onSubmit={handleCreateCollection}>
+              <label className="field">
+                <span>Nome</span>
+                <input
+                  type="text"
+                  value={collectionName}
+                  onChange={(event) => setCollectionName(event.target.value)}
+                  placeholder="Ex.: Festival 2026"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Descrição</span>
+                <input
+                  type="text"
+                  value={collectionDescription}
+                  onChange={(event) => setCollectionDescription(event.target.value)}
+                  placeholder="Opcional"
+                />
+              </label>
+              <label className="field">
+                <span>Visibilidade</span>
+                <select
+                  value={collectionVisibility}
+                  onChange={(event) =>
+                    setCollectionVisibility(event.target.value as CollectionRow["visibility"])
+                  }
+                >
+                  <option value="private">Privada</option>
+                  <option value="team">Equipe</option>
+                  <option value="public">Pública</option>
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => setIsCreateCollectionOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button className="button primary" type="submit" disabled={savingCollection}>
+                  {savingCollection ? (
+                    <>
+                      <LoaderCircle className="spin" size={16} />
+                      Salvando
+                    </>
+                  ) : (
+                    <>
+                      <FolderPlus size={16} />
+                      Criar pasta
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isShareCollectionOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsShareCollectionOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Compartilhar pasta"
+          >
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Compartilhamento</span>
+                <h2>Compartilhar pasta</h2>
+                <p className="panel-subtle">
+                  {selectedCollection
+                    ? `Pasta selecionada: ${selectedCollection.name}`
+                    : "Selecione uma pasta antes de compartilhar."}
+                </p>
+              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => setIsShareCollectionOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <form className="modal-form" onSubmit={handleShareCollection}>
+              <label className="field">
+                <span>Email do usuário</span>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  placeholder="alguem@exemplo.com"
+                  disabled={!selectedCollection}
+                />
+              </label>
+              <label className="field">
+                <span>Papel</span>
+                <select
+                  value={invitePermission}
+                  onChange={(event) =>
+                    setInvitePermission(event.target.value as "viewer" | "editor")
+                  }
+                  disabled={!selectedCollection}
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="editor">Editor</option>
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={() => setIsShareCollectionOpen(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  className="button primary"
+                  type="submit"
+                  disabled={!selectedCollection || sharingCollection}
+                >
+                  {sharingCollection ? (
+                    <>
+                      <LoaderCircle className="spin" size={16} />
+                      Compartilhando
+                    </>
+                  ) : (
+                    <>
+                      <Users size={16} />
+                      Compartilhar
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {isEditCollectionOpen ? (
+        <div
+          className="modal-backdrop"
+          onClick={() => setIsEditCollectionOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="modal-card"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Editar pasta"
+          >
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Editar pasta</span>
+                <h2>{selectedCollection?.name || "Pasta selecionada"}</h2>
+              </div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => setIsEditCollectionOpen(false)}
+              >
+                Fechar
+              </button>
+            </div>
+
+            <form className="modal-form" onSubmit={handleUpdateCollection}>
+              <label className="field">
+                <span>Nome</span>
+                <input
+                  type="text"
+                  value={collectionName}
+                  onChange={(event) => setCollectionName(event.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Descrição</span>
+                <input
+                  type="text"
+                  value={collectionDescription}
+                  onChange={(event) => setCollectionDescription(event.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>Visibilidade</span>
+                <select
+                  value={collectionVisibility}
+                  onChange={(event) =>
+                    setCollectionVisibility(event.target.value as CollectionRow["visibility"])
+                  }
+                >
+                  <option value="private">Privada</option>
+                  <option value="team">Equipe</option>
+                  <option value="public">Pública</option>
+                </select>
+              </label>
+              <div className="modal-actions between">
+                <button
+                  className="button secondary"
+                  type="button"
+                  onClick={handleDeleteCollection}
+                  disabled={savingCollection}
+                >
+                  <Trash2 size={16} />
+                  Excluir pasta
+                </button>
+                <div className="modal-actions">
+                  <button
+                    className="button secondary"
+                    type="button"
+                    onClick={() => setIsEditCollectionOpen(false)}
+                  >
+                    Cancelar
+                  </button>
+                  <button className="button primary" type="submit" disabled={savingCollection}>
+                    {savingCollection ? (
+                      <>
+                        <LoaderCircle className="spin" size={16} />
+                        Salvando
+                      </>
+                    ) : (
+                      "Salvar alterações"
+                    )}
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
       ) : null}
     </main>
   );
