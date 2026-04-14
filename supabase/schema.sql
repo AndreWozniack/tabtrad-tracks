@@ -270,3 +270,36 @@ with check (
       and c.owner_id = auth.uid()
   )
 );
+
+-- Public collection access policies
+drop policy if exists "anon can read public collections" on public.collections;
+create policy "anon can read public collections"
+on public.collections for select
+to anon
+using (visibility = 'public');
+
+drop policy if exists "anon can read public collection tracks" on public.collection_tracks;
+create policy "anon can read public collection tracks"
+on public.collection_tracks for select
+to anon
+using (
+  exists (
+    select 1 from public.collections c
+    where c.id = public.collection_tracks.collection_id
+      and c.visibility = 'public'
+  )
+);
+
+drop policy if exists "anon can read tracks in public collections" on public.tracks;
+create policy "anon can read tracks in public collections"
+on public.tracks for select
+to anon
+using (
+  exists (
+    select 1
+    from public.collection_tracks ct
+    join public.collections c on c.id = ct.collection_id
+    where ct.track_id = public.tracks.id
+      and c.visibility = 'public'
+  )
+);
